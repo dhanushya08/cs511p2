@@ -25,8 +25,8 @@ case "${INPUT_URI%/}/" in "$OUTPUT_URI/"*) echo "Output must not contain the inp
 dc cp pagerank.py main:/pagerank.py || exit 1
 
 # Spark refuses to write into an existing directory.
-dc exec -T main hdfs dfs -rm -r -f "$OUTPUT_URI" || exit 1
+dc exec -T main hdfs dfs -rm -r -f "$OUTPUT_URI" </dev/null || exit 1
 
 dc exec -T main spark-submit \
     --master spark://main:7077 \
-    /pagerank.py "$INPUT_URI" "$OUTPUT_URI" "$@"
+    /pagerank.py "$INPUT_URI" "$OUTPUT_URI" "$@" </dev/null

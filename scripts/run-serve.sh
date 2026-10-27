@@ -21,7 +21,7 @@ done
 
 main_exec 'rm -rf /search' || exit 1
 dc cp search main:/search || exit 1
-dc exec -T main bash /search/serve.sh "${1%/}" "${2%/}" || exit 1
+dc exec -T main bash /search/serve.sh "${1%/}" "${2%/}" </dev/null || exit 1
 
 for _ in $(seq 1 60); do
     if python3 -c 'import urllib.request; urllib.request.urlopen("http://localhost:8000/health", timeout=2)' \

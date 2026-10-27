@@ -25,7 +25,7 @@ function test_cluster_q1() {
 function test_cluster_q2() {
     dc cp resources/active_executors.scala main:/active_executors.scala || return 1
     dc exec -T main bash -ex -o pipefail -c '\
-        cat /active_executors.scala | spark-shell --master spark://main:7077'
+        cat /active_executors.scala | spark-shell --master spark://main:7077' </dev/null
 }
 
 # Q3: the checkpoint directory of Part 2 exists after startup.

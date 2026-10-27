@@ -26,11 +26,12 @@ function dc() {
 }
 
 # node_exec <node> <bash command ...>: run a command on a node. -T is required
-# because the test scripts do not run on a terminal.
+# because the test scripts do not run on a terminal. Close stdin as well:
+# Compose still attaches it with -T and can wait for terminal input to end.
 function node_exec() {
     local node="$1"
     shift
-    dc exec -T "$node" bash -c "$*"
+    dc exec -T "$node" bash -c "$*" </dev/null
 }
 
 # main_exec <bash command ...>
