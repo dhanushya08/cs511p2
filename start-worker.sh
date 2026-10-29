@@ -18,4 +18,9 @@ fi
 
 # Start HDFS/Spark worker here
 
+until (echo > /dev/tcp/main/9000) 2>/dev/null; do sleep 1; done
+until (echo > /dev/tcp/main/7077) 2>/dev/null; do sleep 1; done
+hdfs --daemon start datanode
+start-worker.sh spark://main:7077
+
 bash

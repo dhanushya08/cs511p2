@@ -34,4 +34,18 @@ fi
 
 # Start HDFS/Spark main here
 
+# HDFS: NameNode + DataNode on main.
+if [ ! -d /hadoop-data/name/current ]; then
+    hdfs namenode -format -force -nonInteractive
+fi
+hdfs --daemon start namenode
+hdfs --daemon start datanode
+until hdfs dfs -ls / >/dev/null 2>&1; do sleep 1; done
+hdfs dfsadmin -safemode wait
+hdfs dfs -mkdir -p /spark/checkpoints
+
+# Spark: master + a worker on main.
+start-master.sh
+start-worker.sh spark://main:7077
+
 bash

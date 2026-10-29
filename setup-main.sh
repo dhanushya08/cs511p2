@@ -12,3 +12,4 @@ chmod 0600 ~/.ssh/authorized_keys
 ####################################################################################
 
 # Setup HDFS/Spark main here
+# Hadoop and Spark are installed and configured in cs511p2-common.Dockerfile.

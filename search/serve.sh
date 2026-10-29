@@ -8,7 +8,7 @@
 # (re)build everything from the given inputs, start the server in the
 # background on port 8000, and return once GET /health answers. Run it twice
 # and the second run must replace the first server.
-set -e
+set -eo pipefail
 cd "$(dirname "$0")"
 
 ARTICLES_URI="$1"
@@ -23,15 +23,17 @@ pkill -f '[s]erver.py' || true
 hdfs dfs -rm -r -f "$INDEX_URI"
 spark-submit --master spark://main:7077 indexer.py "$ARTICLES_URI" "$RANKS_URI" "$INDEX_URI"
 
-# 2. Load it into your database.
-# TODO: start your database if it runs as a service (or install it in the
-# Dockerfiles and start it in start-main.sh), and load the index into it,
-# e.g. hdfs dfs -cat "${INDEX_URI}/postings/part-*" | <your loader>.
-echo "TODO: load the index into your database (search/serve.sh)" >&2
-exit 1
+# 2. Load it into SQLite (a fresh file every time).
+mkdir -p "$(dirname "$DATABASE")"
+rm -f "$DATABASE"
+START=$SECONDS
+hdfs dfs -cat "${INDEX_URI}/docs/part-*" | python3 load_index.py "$DATABASE" docs
+hdfs dfs -cat "${INDEX_URI}/postings/part-*" | python3 load_index.py "$DATABASE" postings
+echo "DATABASE LOAD SECONDS: $((SECONDS - START))"
+ls -l "$DATABASE"
 
 # 3. Start the server in the background and wait until it answers.
-setsid nohup python3 server.py --port 8000 > /search/server.log 2>&1 < /dev/null &
+setsid nohup python3 server.py --port 8000 --database "$DATABASE" > /search/server.log 2>&1 < /dev/null &
 for _ in $(seq 1 120); do
     if python3 -c 'import urllib.request; urllib.request.urlopen("http://localhost:8000/health", timeout=2)' \
             2>/dev/null; then

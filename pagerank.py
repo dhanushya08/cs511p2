@@ -56,9 +56,19 @@ def parse_article(line):
     are not integers are dropped. Keep duplicates, self-links and links to
     unknown articles here: build_graph removes them.
     """
-    # TODO: implement. json.loads raises ValueError on invalid JSON; use
-    # is_integer() for the id and for each link.
-    raise NotImplementedError("parse_article")
+    try:
+        article = json.loads(line)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(article, dict):
+        return None
+    article_id = article.get("id")
+    if not is_integer(article_id):
+        return None
+    links = article.get("links")
+    if not isinstance(links, list):
+        return (article_id, [])
+    return (article_id, [t for t in links if is_integer(t)])
 
 
 def build_graph(lines):
@@ -70,12 +80,16 @@ def build_graph(lines):
     article itself and without ids that are not valid articles of the input
     (broken links). Article ids are unique.
     """
-    # TODO: parse the lines and drop invalid ones, then build the edges.
-    # A link to an unknown id can only be detected against the set of all
-    # valid ids: join the candidate edges (keyed by target) with the ids.
-    # Finally attach the kept targets to every article, keeping the articles
-    # that have none (cogroup or leftOuterJoin), and sort/deduplicate them.
-    raise NotImplementedError("build_graph")
+    articles = lines.map(parse_article).filter(lambda a: a is not None)
+    nodes = articles.map(lambda a: (a[0], None))
+    # Candidate edges keyed by target; the join with the valid ids drops the
+    # broken links, and self-links are removed up front.
+    edges = articles.flatMap(
+        lambda a: [(t, a[0]) for t in set(a[1]) if t != a[0]])
+    valid_edges = edges.join(nodes).map(lambda kv: (kv[1][0], kv[0]))
+    targets = valid_edges.groupByKey().mapValues(lambda ts: sorted(set(ts)))
+    return nodes.leftOuterJoin(targets) \
+        .mapValues(lambda v: v[1] if v[1] is not None else [])
 
 
 # --- PageRank -------------------------------------------------------------------
@@ -86,8 +100,10 @@ def contributions(targets, rank, damping):
     The page splits damping * rank evenly over its targets. A dangling page
     (no targets) sends nothing.
     """
-    # TODO: implement.
-    raise NotImplementedError("contributions")
+    if not targets:
+        return []
+    share = damping * rank / len(targets)
+    return [(t, share) for t in targets]
 
 
 def pagerank_step(links, ranks, num_pages, damping, num_partitions, checkpoint=False):
@@ -106,16 +122,24 @@ def pagerank_step(links, ranks, num_pages, damping, num_partitions, checkpoint=F
     mark them for checkpointing; Spark only honours checkpoint() if it is
     called before the first action that computes the RDD.
     """
-    # TODO: implement with RDD operations only (no collect of the ranks).
-    # 1. Join `links` with `ranks` and flatMap through contributions(), then
-    #    sum the shares per target with reduceByKey(add, num_partitions).
-    # 2. Give every page its incoming sum (0.0 when it receives nothing):
-    #    pages without in-links must not disappear.
-    # 3. d = 1 - (sum of those values); add d / num_pages to every page.
-    # 4. Keep the partitioner (mapValues), persist, call checkpoint() if
-    #    asked, and only then run actions.
-    # 5. delta = sum over pages of |new - old|.
-    raise NotImplementedError("pagerank_step")
+    contribs = links.join(ranks) \
+        .flatMap(lambda kv: contributions(kv[1][0], kv[1][1], damping)) \
+        .reduceByKey(add, num_partitions)
+    # Every page gets its incoming sum (0.0 without in-links); the join of
+    # co-partitioned RDDs needs no shuffle and keeps the partitioner.
+    incoming = ranks.leftOuterJoin(contribs) \
+        .mapValues(lambda v: v[1] if v[1] is not None else 0.0) \
+        .persist()
+    teleport = (1.0 - incoming.values().sum()) / num_pages
+    new_ranks = incoming.mapValues(lambda x: x + teleport).persist()
+    if checkpoint:
+        new_ranks.checkpoint()
+    delta = new_ranks.join(ranks) \
+        .values() \
+        .map(lambda v: abs(v[0] - v[1])) \
+        .sum()
+    incoming.unpersist()
+    return new_ranks, delta
 
 
 def run_pagerank(links, num_pages, damping=DAMPING, epsilon=EPSILON,
@@ -127,12 +151,22 @@ def run_pagerank(links, num_pages, damping=DAMPING, epsilon=EPSILON,
     bound, and unpersist ranks that are no longer needed.
     Return (ranks, deltas), where deltas[i] is the delta of iteration i + 1.
     """
-    # TODO: start from R_0(u) = 1 / num_pages with the partitioner of `links`
-    # (mapValues), call pagerank_step until delta <= epsilon or
-    # max_iterations iterations, pass checkpoint=True every
-    # `checkpoint_every` iterations, and unpersist the previous ranks.
-    # Printing the delta of each iteration helps debugging.
-    raise NotImplementedError("run_pagerank")
+    num_partitions = links.getNumPartitions()
+    ranks = links.mapValues(lambda _: 1.0 / num_pages if num_pages else 0.0)
+    deltas = []
+    if num_pages == 0:
+        return ranks, deltas
+    for iteration in range(1, max_iterations + 1):
+        checkpoint = checkpoint_every > 0 and iteration % checkpoint_every == 0
+        new_ranks, delta = pagerank_step(links, ranks, num_pages, damping,
+                                         num_partitions, checkpoint)
+        ranks.unpersist()
+        ranks = new_ranks
+        deltas.append(delta)
+        print("ITERATION %d DELTA %.6e" % (iteration, delta), flush=True)
+        if delta <= epsilon:
+            break
+    return ranks, deltas
 
 
 # --- Given code -----------------------------------------------------------------

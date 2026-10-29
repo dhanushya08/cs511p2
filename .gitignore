@@ -6,3 +6,5 @@ resources/wiki-full/*
 
 /staff/
 /tests/test_staff_*.py
+
+.idea/

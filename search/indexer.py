@@ -73,17 +73,28 @@ def build_postings(articles, num_articles):
 
     weight = tf * ln(num_articles / df), as described in the module docstring.
     """
-    # TODO: count the terms of each article's text (tokenize, then e.g.
-    # collections.Counter), group the (article_id, tf) pairs by term, and
-    # turn each tf into tf * ln(num_articles / df), where df is the number
-    # of articles in the term's group.
-    raise NotImplementedError("build_postings")
+    def term_counts(article):
+        article_id, _title, text = article
+        return [(term, (article_id, tf)) for term, tf in Counter(tokenize(text)).items()]
+
+    def weigh(entries):
+        entries = sorted(entries)
+        idf = math.log(num_articles / len(entries))
+        return [(article_id, tf * idf) for article_id, tf in entries]
+
+    # sortByKey gives each part file a contiguous, ordered range of terms,
+    # which makes the bulk load into the B-tree database an append.
+    return articles.flatMap(term_counts) \
+        .groupByKey() \
+        .mapValues(weigh) \
+        .sortByKey()
 
 
 def build_docs(articles, ranks):
     """Return an RDD of (article_id, (rank, title)) for every valid article."""
-    # TODO: join each article's title with its rank.
-    raise NotImplementedError("build_docs")
+    titles = articles.map(lambda a: (a[0], a[1]))
+    return titles.leftOuterJoin(ranks) \
+        .mapValues(lambda v: (v[1] if v[1] is not None else 0.0, v[0]))
 
 
 # --- Given code -----------------------------------------------------------------

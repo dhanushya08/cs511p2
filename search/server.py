@@ -50,25 +50,49 @@ def tokenize(text):
 class SearchIndex:
     """Answers queries from the database that serve.sh loaded."""
 
-    def __init__(self, database):
-        """Connect to your database; load what should stay in memory.
-
-        `database` is the --database option (useful if your database is a
-        file); ignore it otherwise. Called once, when the server starts.
-        """
-        # TODO: implement.
-        raise NotImplementedError("SearchIndex.__init__")
+    def __init__(self, database, pool_size=8, cache_size=2048):
+        """Open a pool of read-only SQLite connections."""
+        import queue
+        import sqlite3
+        import threading
+        self._pool = queue.Queue()
+        for _ in range(pool_size):
+            conn = sqlite3.connect("file:%s?mode=ro" % database, uri=True,
+                                   check_same_thread=False)
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("PRAGMA cache_size=-100000")
+            conn.execute("PRAGMA mmap_size=1073741824")
+            self._pool.put(conn)
+        self._cache = {}
+        self._cache_size = cache_size
+        self._lock = threading.Lock()
 
     def search(self, terms):
-        """Return the top TOP_K [(score, article_id, title)] for a set of terms.
-
-        Called concurrently from several threads (one per request). An
-        article matches when it contains every term; see the module docstring
-        for the score. Return [] when there are no terms or no matches.
-        """
-        # TODO: implement. heapq.nsmallest(TOP_K, ..., key=lambda s: (-s[0], s[1]))
-        # keeps the TOP_K best without sorting every match.
-        raise NotImplementedError("SearchIndex.search")
+        """Return the top TOP_K [(score, article_id, title)] for a set of terms."""
+        if not terms:
+            return []
+        key = frozenset(terms)
+        with self._lock:
+            hit = self._cache.get(key)
+        if hit is not None:
+            return hit
+        terms = sorted(terms)
+        marks = ",".join("?" * len(terms))
+        sql = ("SELECT d.id, d.rank * SUM(p.weight), d.title "
+               "FROM postings p JOIN docs d ON d.id = p.doc_id "
+               "WHERE p.term IN (%s) GROUP BY p.doc_id HAVING COUNT(*) = ? "
+               "ORDER BY 2 DESC, 1 ASC LIMIT ?" % marks)
+        conn = self._pool.get()
+        try:
+            rows = conn.execute(sql, terms + [len(terms), TOP_K]).fetchall()
+        finally:
+            self._pool.put(conn)
+        result = [(score, doc_id, title) for doc_id, score, title in rows]
+        with self._lock:
+            if len(self._cache) >= self._cache_size:
+                self._cache.clear()
+            self._cache[key] = result
+        return result
 
 
 # --- Given code -----------------------------------------------------------------
